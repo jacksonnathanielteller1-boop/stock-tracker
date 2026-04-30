@@ -36,7 +36,6 @@ export default function AddStockPage() {
       if (!res.ok) throw new Error('Not found')
       const data: QuoteResult = await res.json()
       setQuote(data)
-      // Pre-fill buy price with current market price
       setBuyPrice(String(data.regularMarketPrice.toFixed(2)))
     } catch {
       setQuoteError('Ticker not found. Check the symbol and try again.')
@@ -89,24 +88,26 @@ export default function AddStockPage() {
   }
 
   return (
-    <div className="max-w-lg space-y-6">
+    <div className="max-w-lg space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-white">Add Stock</h1>
-        <p className="text-gray-400 text-sm mt-0.5">Add to your portfolio or watchlist</p>
+        <h1 className="font-serif text-4xl font-bold text-white tracking-tight">Add Stock</h1>
+        <p className="text-white/40 text-sm mt-1">Add to your portfolio or watchlist</p>
       </div>
 
-      <form onSubmit={handleSubmit} className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-5">
+      <form onSubmit={handleSubmit} className="bg-surface border border-white/[0.06] rounded-2xl p-7 space-y-6">
         {/* Type toggle */}
         <div>
-          <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">Type</label>
-          <div className="flex rounded-lg overflow-hidden border border-gray-700">
+          <label className="block text-xs text-white/35 uppercase tracking-widest mb-3">Type</label>
+          <div className="flex rounded-lg overflow-hidden border border-white/[0.08]">
             {(['portfolio', 'watchlist'] as Type[]).map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setType(t)}
-                className={`flex-1 py-2 text-sm font-medium capitalize transition-colors ${
-                  type === t ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'
+                className={`flex-1 py-2.5 text-sm font-medium capitalize transition-all ${
+                  type === t
+                    ? 'bg-gold text-black font-semibold'
+                    : 'bg-surface-2 text-white/50 hover:text-white'
                 }`}
               >
                 {t}
@@ -117,7 +118,7 @@ export default function AddStockPage() {
 
         {/* Ticker */}
         <div>
-          <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">
+          <label className="block text-xs text-white/35 uppercase tracking-widest mb-3">
             Ticker Symbol
           </label>
           <div className="flex gap-2">
@@ -127,23 +128,25 @@ export default function AddStockPage() {
               onChange={(e) => setTicker(e.target.value.toUpperCase())}
               onBlur={() => lookupTicker(ticker)}
               placeholder="e.g. AAPL"
-              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 font-mono uppercase"
+              className="flex-1 bg-black border border-white/[0.08] rounded-lg px-4 py-2.5 text-white placeholder-white/20 focus:outline-none focus:border-gold/40 font-mono uppercase transition-colors"
             />
             <button
               type="button"
               onClick={() => lookupTicker(ticker)}
               disabled={loadingQuote || !ticker}
-              className="px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded-lg text-sm transition-colors"
+              className="px-4 py-2.5 border border-white/[0.08] text-white/60 hover:text-white hover:border-gold/30 disabled:opacity-40 rounded-lg text-sm transition-all"
             >
               {loadingQuote ? '…' : 'Lookup'}
             </button>
           </div>
-          {quoteError && <p className="text-red-400 text-xs mt-1">{quoteError}</p>}
+          {quoteError && <p className="text-loss text-xs mt-2">{quoteError}</p>}
           {quote && (
-            <div className="mt-2 px-3 py-2 bg-gray-800 rounded-lg text-sm">
-              <span className="text-blue-400 font-mono font-semibold">{quote.ticker}</span>
-              <span className="text-gray-300 ml-2">{quote.shortName}</span>
-              <span className="text-white font-semibold ml-auto float-right">
+            <div className="mt-3 px-4 py-3 bg-black border border-white/[0.06] rounded-lg text-sm flex items-center justify-between">
+              <div>
+                <span className="text-gold font-mono font-bold">{quote.ticker}</span>
+                <span className="text-white/60 ml-2 text-xs">{quote.shortName}</span>
+              </div>
+              <span className="text-white font-mono font-semibold">
                 ${quote.regularMarketPrice.toFixed(2)}
               </span>
             </div>
@@ -154,7 +157,7 @@ export default function AddStockPage() {
         {type === 'portfolio' && (
           <>
             <div>
-              <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">Shares</label>
+              <label className="block text-xs text-white/35 uppercase tracking-widest mb-3">Shares</label>
               <input
                 type="number"
                 value={shares}
@@ -162,15 +165,15 @@ export default function AddStockPage() {
                 placeholder="10"
                 min="0"
                 step="any"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-black border border-white/[0.08] rounded-lg px-4 py-2.5 text-white placeholder-white/20 focus:outline-none focus:border-gold/40 font-mono transition-colors"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">
+              <label className="block text-xs text-white/35 uppercase tracking-widest mb-3">
                 Buy Price (per share)
               </label>
               <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span>
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 font-mono">$</span>
                 <input
                   type="number"
                   value={buyPrice}
@@ -178,35 +181,35 @@ export default function AddStockPage() {
                   placeholder="0.00"
                   min="0"
                   step="any"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-7 pr-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                  className="w-full bg-black border border-white/[0.08] rounded-lg pl-8 pr-4 py-2.5 text-white placeholder-white/20 focus:outline-none focus:border-gold/40 font-mono transition-colors"
                 />
               </div>
             </div>
             <div>
-              <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">Buy Date</label>
+              <label className="block text-xs text-white/35 uppercase tracking-widest mb-3">Buy Date</label>
               <input
                 type="date"
                 value={buyDate}
                 onChange={(e) => setBuyDate(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                className="w-full bg-black border border-white/[0.08] rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-gold/40 font-mono transition-colors"
               />
             </div>
           </>
         )}
 
         {type === 'watchlist' && quote && (
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-white/40">
             Will track from current price of{' '}
-            <span className="text-white font-semibold">${quote.regularMarketPrice.toFixed(2)}</span>
+            <span className="text-gold font-mono font-semibold">${quote.regularMarketPrice.toFixed(2)}</span>
           </p>
         )}
 
-        {error && <p className="text-red-400 text-sm">{error}</p>}
+        {error && <p className="text-loss text-sm">{error}</p>}
 
         <button
           type="submit"
           disabled={submitting || !quote}
-          className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors"
+          className="w-full py-3 bg-gold text-black rounded-lg font-semibold text-sm hover:bg-gold-dim disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           {submitting ? 'Adding…' : type === 'portfolio' ? 'Add to Portfolio' : 'Add to Watchlist'}
         </button>

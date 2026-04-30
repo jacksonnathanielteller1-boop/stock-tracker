@@ -3,7 +3,21 @@ import { getPortfolio, savePortfolio, PortfolioEntry } from '@/lib/data'
 import { getQuotes } from '@/lib/yahoo'
 import { randomUUID } from 'crypto'
 
-// GET — return portfolio entries enriched with current prices
+function calcReturn(
+  currentPrice: number | null,
+  refPrice: number | null,
+  shares: number
+): { dollar: number | null; percent: number | null } {
+  if (currentPrice == null || refPrice == null || refPrice === 0) {
+    return { dollar: null, percent: null }
+  }
+  return {
+    dollar: (currentPrice - refPrice) * shares,
+    percent: ((currentPrice - refPrice) / refPrice) * 100,
+  }
+}
+
+// GET — return portfolio entries enriched with current prices and return metrics
 export async function GET() {
   const entries = await getPortfolio()
   const tickers = Array.from(new Set(entries.map((e) => e.ticker)))
@@ -13,16 +27,31 @@ export async function GET() {
     const q = quotes[e.ticker]
     const currentPrice = q?.regularMarketPrice ?? null
     const totalValue = currentPrice != null ? currentPrice * e.shares : null
-    const gainLossDollar = currentPrice != null ? (currentPrice - e.buyPrice) * e.shares : null
-    const gainLossPercent =
-      currentPrice != null ? ((currentPrice - e.buyPrice) / e.buyPrice) * 100 : null
+    const gainLoss = calcReturn(currentPrice, e.buyPrice, e.shares)
+    const today = calcReturn(currentPrice, q?.previousClose ?? null, e.shares)
+    const wtd = calcReturn(currentPrice, q?.weekStartPrice ?? null, e.shares)
+    const mtd = calcReturn(currentPrice, q?.monthStartPrice ?? null, e.shares)
+    const ytd = calcReturn(currentPrice, q?.yearStartPrice ?? null, e.shares)
+
     return {
       ...e,
       companyName: q?.shortName ?? e.companyName,
       currentPrice,
       totalValue,
-      gainLossDollar,
-      gainLossPercent,
+      gainLossDollar: gainLoss.dollar,
+      gainLossPercent: gainLoss.percent,
+      todayDollar: today.dollar,
+      todayPercent: today.percent,
+      wtdDollar: wtd.dollar,
+      wtdPercent: wtd.percent,
+      mtdDollar: mtd.dollar,
+      mtdPercent: mtd.percent,
+      ytdDollar: ytd.dollar,
+      ytdPercent: ytd.percent,
+      previousClose: q?.previousClose ?? null,
+      weekStartPrice: q?.weekStartPrice ?? null,
+      monthStartPrice: q?.monthStartPrice ?? null,
+      yearStartPrice: q?.yearStartPrice ?? null,
     }
   })
 

@@ -3,7 +3,20 @@ import { getWatchlist, saveWatchlist, WatchlistEntry } from '@/lib/data'
 import { getQuotes } from '@/lib/yahoo'
 import { randomUUID } from 'crypto'
 
-// GET — return watchlist entries enriched with current prices
+function calcReturn(
+  currentPrice: number | null,
+  refPrice: number | null
+): { dollar: number | null; percent: number | null } {
+  if (currentPrice == null || refPrice == null || refPrice === 0) {
+    return { dollar: null, percent: null }
+  }
+  return {
+    dollar: currentPrice - refPrice,
+    percent: ((currentPrice - refPrice) / refPrice) * 100,
+  }
+}
+
+// GET — return watchlist entries enriched with current prices and return metrics
 export async function GET() {
   const entries = await getWatchlist()
   const tickers = Array.from(new Set(entries.map((e) => e.ticker)))
@@ -12,15 +25,26 @@ export async function GET() {
   const enriched = entries.map((e) => {
     const q = quotes[e.ticker]
     const currentPrice = q?.regularMarketPrice ?? null
-    const changeDollar = currentPrice != null ? currentPrice - e.priceWhenAdded : null
-    const changePercent =
-      currentPrice != null ? ((currentPrice - e.priceWhenAdded) / e.priceWhenAdded) * 100 : null
+    const sinceAdded = calcReturn(currentPrice, e.priceWhenAdded)
+    const today = calcReturn(currentPrice, q?.previousClose ?? null)
+    const wtd = calcReturn(currentPrice, q?.weekStartPrice ?? null)
+    const mtd = calcReturn(currentPrice, q?.monthStartPrice ?? null)
+    const ytd = calcReturn(currentPrice, q?.yearStartPrice ?? null)
+
     return {
       ...e,
       companyName: q?.shortName ?? e.companyName,
       currentPrice,
-      changeDollar,
-      changePercent,
+      changeDollar: sinceAdded.dollar,
+      changePercent: sinceAdded.percent,
+      todayDollar: today.dollar,
+      todayPercent: today.percent,
+      wtdDollar: wtd.dollar,
+      wtdPercent: wtd.percent,
+      mtdDollar: mtd.dollar,
+      mtdPercent: mtd.percent,
+      ytdDollar: ytd.dollar,
+      ytdPercent: ytd.percent,
     }
   })
 
