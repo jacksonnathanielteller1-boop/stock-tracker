@@ -1884,12 +1884,13 @@ def print_rule1(name: str, r: dict):
 
 
 # ─────────────────────────────────────────────
-# NYSE Screener
+# NYSE Screener & auto-add logic
 # ─────────────────────────────────────────────
 
-PROGRESS_FILE  = "nyse_scan_progress.json"
-RESULTS_FILE   = "nyse_scan_results.json"
-SCORE_THRESHOLD = 21   # "Average" and above
+PROGRESS_FILE   = "nyse_scan_progress.json"
+RESULTS_FILE    = "nyse_scan_results.json"
+SCORE_THRESHOLD = 21     # "Average" and above
+POSITION_BUDGET = 5_000  # dollars allocated per portfolio entry
 
 
 def get_nyse_tickers() -> list[tuple[str, str]]:
@@ -1940,8 +1941,22 @@ def _save_progress(progress: dict) -> None:
         json.dump(progress, f, indent=2)
 
 
+def _get_existing_tickers(endpoint: str) -> set[str]:
+    """GET entries from the given API endpoint; return set of uppercase tickers."""
+    website_url = os.environ.get("WEBSITE_URL", "").rstrip("/")
+    if not website_url:
+        return set()
+    try:
+        resp = requests.get(f"{website_url}{endpoint}", timeout=10)
+        if resp.ok:
+            return {e["ticker"].upper() for e in resp.json() if "ticker" in e}
+    except Exception:
+        pass
+    return set()
+
+
 def _post_to_watchlist(ticker: str, company: str, price: float) -> bool:
-    """POST a qualifying stock to the website watchlist API."""
+    """POST a stock to the website watchlist API."""
     website_url = os.environ.get("WEBSITE_URL", "").rstrip("/")
     if not website_url:
         return False
@@ -1956,10 +1971,113 @@ def _post_to_watchlist(ticker: str, company: str, price: float) -> bool:
         return False
 
 
+def _post_to_portfolio(ticker: str, company: str, shares: int,
+                       buy_price: float, buy_date: str) -> bool:
+    """POST a stock to the website portfolio API."""
+    website_url = os.environ.get("WEBSITE_URL", "").rstrip("/")
+    if not website_url:
+        return False
+    try:
+        resp = requests.post(
+            f"{website_url}/api/portfolio",
+            json={
+                "ticker":      ticker,
+                "companyName": company,
+                "shares":      shares,
+                "buyPrice":    buy_price,
+                "buyDate":     buy_date,
+            },
+            timeout=10,
+        )
+        return resp.status_code in (200, 201)
+    except Exception:
+        return False
+
+
+def auto_add(ticker: str, name: str, score: int,
+             price: Optional[float], r1: Optional[dict]) -> tuple[str, str]:
+    """
+    Core decision function: portfolio, watchlist, or skip.
+
+    Rules:
+      - score < 21            → skip
+      - score >= 21, price <= MOS and shares >= 1 → portfolio ($POSITION_BUDGET / price)
+      - score >= 21, otherwise                    → watchlist
+
+    Duplicate prevention: GETs current portfolio/watchlist before each POST.
+    If WEBSITE_URL env var is not set, returns ('dry_run', ...) describing
+    what would have happened without making any API calls.
+
+    Returns (destination, message) where destination is one of:
+      'portfolio'  successfully added to portfolio
+      'watchlist'  successfully added to watchlist
+      'duplicate'  ticker already exists in the target list
+      'skipped'    score below threshold or no valid price
+      'dry_run'    WEBSITE_URL not set — described action only
+      'failed'     API call was made but returned an error
+    """
+    if score < SCORE_THRESHOLD:
+        return ("skipped",
+                f"Skipped — score {score}/{TOTAL_QUESTIONS} below threshold ({SCORE_THRESHOLD})")
+
+    if price is None or price <= 0:
+        return ("skipped",
+                f"Skipped — no valid price available (score {score}/{TOTAL_QUESTIONS})")
+
+    # MOS: prefer adjusted model, fall back to original
+    mos: Optional[float] = None
+    if r1:
+        mos = r1.get("adj_mos") or r1.get("mos")
+
+    website_url = os.environ.get("WEBSITE_URL", "").rstrip("/")
+    today = datetime.date.today().isoformat()
+
+    # Determine destination
+    shares = int(POSITION_BUDGET / price) if price > 0 else 0
+    use_portfolio = (mos is not None and price <= mos and shares >= 1)
+
+    if use_portfolio:
+        mos_str = f"${mos:.2f}"
+        if not website_url:
+            return ("dry_run",
+                    f"[DRY RUN] PORTFOLIO: {ticker} — {shares} shares @ ${price:.2f}"
+                    f"  (Score: {score}/{TOTAL_QUESTIONS}, MOS: {mos_str})"
+                    f"  — set WEBSITE_URL to execute")
+
+        if ticker.upper() in _get_existing_tickers("/api/portfolio"):
+            return ("duplicate",
+                    f"PORTFOLIO duplicate — {ticker} already exists, skipped")
+
+        ok = _post_to_portfolio(ticker, name, shares, price, today)
+        if ok:
+            return ("portfolio",
+                    f"Added to PORTFOLIO: {ticker} — {shares} shares @ ${price:.2f}"
+                    f"  (Score: {score}/{TOTAL_QUESTIONS}, MOS: {mos_str})")
+        return ("failed", f"PORTFOLIO POST failed for {ticker}")
+
+    else:
+        mos_str = f", MOS: ${mos:.2f}" if mos else ""
+        reason  = (f"price ${price:.2f} > MOS ${mos:.2f}" if mos else "no MOS available")
+        if not website_url:
+            return ("dry_run",
+                    f"[DRY RUN] WATCHLIST: {ticker}  (Score: {score}/{TOTAL_QUESTIONS}{mos_str},"
+                    f" {reason})  — set WEBSITE_URL to execute")
+
+        if ticker.upper() in _get_existing_tickers("/api/watchlist"):
+            return ("duplicate",
+                    f"WATCHLIST duplicate — {ticker} already exists, skipped")
+
+        ok = _post_to_watchlist(ticker, name, price)
+        if ok:
+            return ("watchlist",
+                    f"Added to WATCHLIST: {ticker}  (Score: {score}/{TOTAL_QUESTIONS}{mos_str})")
+        return ("failed", f"WATCHLIST POST failed for {ticker}")
+
+
 def _analyze_quiet(ticker: str):
     """
     Run analyze() with all output suppressed.
-    Returns (company_name, yes_score, current_price) or None on any failure.
+    Returns (name, yes_count, price, r1) or None on any failure.
     """
     buf = io.StringIO()
     try:
@@ -1967,7 +2085,7 @@ def _analyze_quiet(ticker: str):
             name, answers, r1 = analyze(ticker)
         yes_count = sum(1 for a in answers if a.result == "Yes")
         price = r1.get("current_price") if r1 else None
-        return name, yes_count, price
+        return name, yes_count, price, r1
     except SystemExit:
         return None
     except Exception:
@@ -1978,8 +2096,8 @@ def run_screen_nyse(resume: bool = False) -> None:
     """
     Screen every NYSE common stock with the 58-question framework.
     Saves incremental progress to PROGRESS_FILE and final results to
-    RESULTS_FILE.  Qualifying stocks (score >= SCORE_THRESHOLD) are
-    automatically POSTed to the watchlist API when WEBSITE_URL is set.
+    RESULTS_FILE.  Qualifying stocks are auto-added to portfolio or
+    watchlist via auto_add() when WEBSITE_URL is set.
     """
     progress = _load_progress() if resume else {"completed": [], "results": []}
     completed_set = set(progress["completed"])
@@ -2001,33 +2119,25 @@ def run_screen_nyse(resume: bool = False) -> None:
 
         if result is None:
             print("  [SKIP — data unavailable]")
-        else:
-            name, score, price = result
-            cat = category(score)
+            progress["completed"].append(ticker)
+            _save_progress(progress)
+            time.sleep(1.5)
+            continue
 
-            added = False
-            if score >= SCORE_THRESHOLD and price is not None:
-                added = _post_to_watchlist(ticker, name, price)
+        name, score, price, r1 = result
+        cat = category(score)
+        destination, action_msg = auto_add(ticker, name, score, price, r1)
 
-            if score >= SCORE_THRESHOLD:
-                watchlist_note = (
-                    " — Added to watchlist" if added
-                    else " — Qualifies (set WEBSITE_URL to post)"
-                )
-            else:
-                watchlist_note = ""
+        print(f"  Score {score}/{TOTAL_QUESTIONS} [{cat}] — {action_msg}")
 
-            print(f"  Score {score}/{TOTAL_QUESTIONS} [{cat}]{watchlist_note}")
-
-            progress["results"].append({
-                "ticker":             ticker,
-                "company":            name,
-                "score":              score,
-                "category":           cat,
-                "price":              price,
-                "added_to_watchlist": added,
-            })
-
+        progress["results"].append({
+            "ticker":      ticker,
+            "company":     name,
+            "score":       score,
+            "category":    cat,
+            "price":       price,
+            "destination": destination,
+        })
         progress["completed"].append(ticker)
         _save_progress(progress)
         time.sleep(1.5)
@@ -2060,13 +2170,13 @@ def run_report() -> None:
     for r in results:
         by_cat.setdefault(r["category"], []).append(r)
 
-    width = 72
+    width = 76
     print("\n" + "=" * width)
     print(f"  NYSE SCAN REPORT — {scan_date}")
     print("=" * width)
     print(f"  Total scanned : {total}")
     print()
-    print("  Breakdown by category:")
+    print("  Breakdown by score category:")
     for lo, hi, cat in CATEGORIES:
         entries = by_cat.get(cat, [])
         bar = "█" * min(len(entries), 40)
@@ -2078,12 +2188,22 @@ def run_report() -> None:
         reverse=True,
     )
 
+    # Destination breakdown
+    portfolio_entries = [r for r in qualifying if r.get("destination") == "portfolio"]
+    watchlist_entries = [r for r in qualifying if r.get("destination") == "watchlist"]
+
+    print(f"\n  Auto-add results:")
+    print(f"    Added to portfolio : {len(portfolio_entries)}")
+    print(f"    Added to watchlist : {len(watchlist_entries)}")
+    print(f"    Duplicate/skipped  : {len(qualifying) - len(portfolio_entries) - len(watchlist_entries)}")
+
     print(f"\n  Qualifying stocks (score ≥ {SCORE_THRESHOLD}) — {len(qualifying)} found:\n")
-    print(f"  {'Ticker':<8} {'Score':>5}  {'Category':<12} {'Price':>8}  Company")
-    print("  " + "-" * 66)
+    print(f"  {'Ticker':<8} {'Score':>5}  {'Category':<12} {'Dest':<10} {'Price':>8}  Company")
+    print("  " + "-" * 70)
     for r in qualifying:
         price_str = f"${r['price']:.2f}" if r.get("price") else "   N/A"
-        print(f"  {r['ticker']:<8} {r['score']:>5}  {r['category']:<12} {price_str:>8}  {r['company']}")
+        dest = r.get("destination", "—")
+        print(f"  {r['ticker']:<8} {r['score']:>5}  {r['category']:<12} {dest:<10} {price_str:>8}  {r['company']}")
     print("=" * width + "\n")
 
 
@@ -2124,12 +2244,19 @@ if __name__ == "__main__":
     elif do_report:
         run_report()
     else:
-        # ── Original single-ticker mode (unchanged) ──────────────────────
+        # ── Single-ticker mode ───────────────────────────────────────────
         if not ticker:
             ticker = input("Enter stock ticker (e.g. AAPL): ").strip().upper()
         if not ticker:
             print("No ticker entered.")
             sys.exit(1)
+
         name, answers, r1 = analyze(ticker)
         print_results(name, answers)
-    print_rule1(name, r1)
+        print_rule1(name, r1)
+
+        # Auto-add to portfolio or watchlist
+        score = sum(1 for a in answers if a.result == "Yes")
+        price = r1.get("current_price") if r1 else None
+        destination, action_msg = auto_add(ticker, name, score, price, r1)
+        print(f"\n  Auto-add: {action_msg}\n")
