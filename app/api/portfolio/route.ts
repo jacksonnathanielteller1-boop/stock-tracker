@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto'
 // GET — return portfolio entries enriched with current prices
 export async function GET() {
   const entries = await getPortfolio()
-  const tickers = [...new Set(entries.map((e) => e.ticker))]
+  const tickers = Array.from(new Set(entries.map((e) => e.ticker)))
   const quotes = await getQuotes(tickers)
 
   const enriched = entries.map((e) => {
